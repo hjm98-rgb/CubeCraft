@@ -124,11 +124,13 @@ jobs:
           echo "$P12_BASE64" | base64 --decode > export/2603802E.p12
           echo "$PROV_BASE64" | base64 --decode > export/2603802E.mobileprovision
           ls -la export/
+          # macOS security 不支持 OpenSSL 3 的 PBES2/AES 加密 p12，转成 legacy 格式再导入
+          openssl pkcs12 -in export/2603802E.p12 -out export/legacy.p12 -export -legacy -passin pass:"$P12_PASS" -passout pass:"$P12_PASS"
           KEYCHAIN=build.keychain
           security create-keychain -p temp $KEYCHAIN
           security default-keychain -s $KEYCHAIN
           security unlock-keychain -p temp $KEYCHAIN
-          security import export/2603802E.p12 -k $KEYCHAIN -P "$P12_PASS" -A -t cert
+          security import export/legacy.p12 -k $KEYCHAIN -P "$P12_PASS" -A -t cert
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k temp $KEYCHAIN
           security find-identity -v -p codesigning $KEYCHAIN
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
