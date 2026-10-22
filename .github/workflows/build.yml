@@ -1,0 +1,174 @@
+name: Build CubeCraft
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+env:
+  GODOT_VERSION: "4.4.1-stable"
+  EXPORT_TEMPLATES_URL: "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_export_templates.tpz"
+
+jobs:
+  build-desktop:
+    name: Build desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            godot_url: "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_linux.x86_64.zip"
+            godot_archive: "godot_linux.zip"
+            godot_bin: "Godot_v4.4.1-stable_linux.x86_64"
+            godot_run: "./Godot_v4.4.1-stable_linux.x86_64"
+            preset: "Linux"
+            export_path: "build/linux/cubecraft.x86_64"
+            artifact: "cubecraft-linux"
+          - os: windows-latest
+            godot_url: "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_win64.exe.zip"
+            godot_archive: "godot_win.zip"
+            godot_bin: "Godot_v4.4.1-stable_win64.exe"
+            godot_run: ".\\Godot_v4.4.1-stable_win64.exe"
+            preset: "Windows Desktop"
+            export_path: "build/windows/cubecraft.exe"
+            artifact: "cubecraft-windows"
+          - os: macos-latest
+            godot_url: "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_macos.universal.zip"
+            godot_archive: "godot_mac.zip"
+            godot_bin: "Godot.app"
+            godot_run: "./Godot.app/Contents/MacOS/Godot"
+            preset: "macOS"
+            export_path: "build/macos/cubecraft.zip"
+            artifact: "cubecraft-macos"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Godot engine
+        shell: bash
+        run: |
+          curl -L -o "${{ matrix.godot_archive }}" "${{ matrix.godot_url }}"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            powershell -Command "Expand-Archive -Force '${{ matrix.godot_archive }}' -DestinationPath ."
+          else
+            unzip -o -q "${{ matrix.godot_archive }}"
+          fi
+          ls -la
+
+      - name: Install export templates
+        shell: bash
+        run: |
+          curl -L -o /tmp/templates.tpz "$EXPORT_TEMPLATES_URL"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            TPL_DIR="$HOME/.local/share/godot/export_templates/4.4.1.stable"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            TPL_DIR="$HOME/Library/Application Support/Godot/export_templates/4.4.1.stable"
+          else
+            TPL_DIR="$APPDATA/Godot/export_templates/4.4.1.stable"
+          fi
+          mkdir -p "$TPL_DIR"
+          unzip -o -q /tmp/templates.tpz -d /tmp/tpl
+          cp -r /tmp/tpl/templates/* "$TPL_DIR"/
+          ls "$TPL_DIR" | head -5
+
+      - name: Export ${{ matrix.preset }}
+        shell: bash
+        run: |
+          mkdir -p build/linux build/windows build/macos
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            "${{ matrix.godot_run }}" --headless --path . --export-release "${{ matrix.preset }}" || true
+          else
+            "${{ matrix.godot_run }}" --headless --path . --export-release "${{ matrix.preset }}"
+          fi
+          ls -la build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.export_path }}
+          if-no-files-found: error
+
+  build-ios:
+    name: Build iOS (signed .ipa)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Godot engine (macOS)
+        shell: bash
+        run: |
+          curl -L -o godot_mac.zip "https://github.com/godotengine/godot/releases/download/4.4.1-stable/Godot_v4.4.1-stable_macos.universal.zip"
+          unzip -o -q godot_mac.zip
+          ./Godot.app/Contents/MacOS/Godot --version
+
+      - name: Install export templates (macOS)
+        shell: bash
+        run: |
+          curl -L -o /tmp/templates.tpz "$EXPORT_TEMPLATES_URL"
+          TPL_DIR="$HOME/Library/Application Support/Godot/export_templates/4.4.1.stable"
+          mkdir -p "$TPL_DIR"
+          unzip -o -q /tmp/templates.tpz -d /tmp/tpl
+          cp -r /tmp/tpl/templates/* "$TPL_DIR"/
+          ls "$TPL_DIR" | grep -i ios
+
+      - name: Inject signing certificate & provisioning profile
+        shell: bash
+        env:
+          P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          P12_PASS: ${{ secrets.IOS_CERT_PASSWORD }}
+          PROV_BASE64: ${{ secrets.IOS_MOBILEPROVISION_BASE64 }}
+        run: |
+          mkdir -p export
+          echo "$P12_BASE64" | base64 --decode > export/2603802E.p12
+          echo "$PROV_BASE64" | base64 --decode > export/2603802E.mobileprovision
+          ls -la export/
+          KEYCHAIN=build.keychain
+          security create-keychain -p temp $KEYCHAIN
+          security default-keychain -s $KEYCHAIN
+          security unlock-keychain -p temp $KEYCHAIN
+          security import export/2603802E.p12 -k $KEYCHAIN -P "$P12_PASS" -A -t cert
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k temp $KEYCHAIN
+          security find-identity -v -p codesigning $KEYCHAIN
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp export/2603802E.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/f34bc930-4015-4dea-94f1-6be9ac79879a.mobileprovision"
+
+      - name: Export iOS Xcode project with Godot
+        shell: bash
+        run: |
+          mkdir -p build/ios
+          ./Godot.app/Contents/MacOS/Godot --headless --path . --export-release "iOS" build/ios 2>&1 | tail -20
+          echo "=== exported structure ==="
+          find build/ios -maxdepth 2 -type d | head -20
+          ls -la build/ios
+
+      - name: Build, sign and package IPA
+        shell: bash
+        run: |
+          cd build/ios
+          PROJ=$(ls -d *.xcodeproj | head -1)
+          echo "PROJECT=$PROJ"
+          xcodebuild -project "$PROJ" -list
+          SCHEME=$(xcodebuild -project "$PROJ" -list 2>/dev/null | awk '/Schemes:/{found=1;next} /Targets:/{found=0} found{print $1; exit}')
+          echo "SCHEME=$SCHEME"
+          xcodebuild -project "$PROJ" -scheme "$SCHEME" -configuration Release -sdk iphoneos -arch arm64 \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM=2TAD594A66 \
+            PROVISIONING_PROFILE="f34bc930-4015-4dea-94f1-6be9ac79879a" \
+            -derivedDataPath derived build 2>&1 | tail -25
+          APP=$(find derived/Build/Products/Release-iphoneos -name "*.app" -maxdepth 1 | head -1)
+          echo "APP=$APP"
+          codesign -dv "$APP" 2>&1 | head -8
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -r -y cubecraft.ipa Payload/
+          ls -la cubecraft.ipa
+          mv cubecraft.ipa ../../cubecraft.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: cubecraft-ios
+          path: cubecraft.ipa
+          if-no-files-found: error

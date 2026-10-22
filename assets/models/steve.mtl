@@ -1,0 +1,14 @@
+newmtl default
+Kd 0.78 0.78 0.78
+newmtl mat0
+Kd 0.769 0.604 0.463
+newmtl mat1
+Kd 0.157 0.157 0.157
+newmtl mat2
+Kd 0.471 0.275 0.196
+newmtl mat3
+Kd 0.227 0.682 0.643
+newmtl mat4
+Kd 0.243 0.290 0.569
+newmtl mat5
+Kd 0.275 0.275 0.275
