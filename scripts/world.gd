@@ -115,7 +115,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_orbit_dist = clampf(_orbit_dist + 1.2, 5.0, 40.0)
 			_update_camera()
 	elif event is InputEventMouseMotion and _dragging:
-		var rel := event.position - _last_mouse
+		var rel: Vector2 = event.position - _last_mouse
 		_last_mouse = event.position
 		_orbit_yaw -= rel.x * 0.01
 		_orbit_pitch = clampf(_orbit_pitch - rel.y * 0.01, -1.3, 1.3)
